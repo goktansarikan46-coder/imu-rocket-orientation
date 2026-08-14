@@ -1,0 +1,29 @@
+# --- Derleme ciktilari (asla yuklenmez) ---
+Debug/
+Release/
+*.o
+*.d
+*.su
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+
+# --- CubeIDE / Eclipse yerel ayarlar ---
+.settings/
+.metadata/
+*.launch
+
+# --- MATLAB ---
+*.asv
+slprj/
+
+# --- Python ---
+__pycache__/
+*.pyc
+venv/
+
+# --- Isletim sistemi ---
+.DS_Store
+Thumbs.db
