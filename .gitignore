@@ -1,4 +1,4 @@
-# --- Derleme ciktilari (asla yuklenmez) ---
+# --- Build output (never committed) ---
 Debug/
 Release/
 *.o
@@ -10,7 +10,7 @@ Release/
 *.map
 *.list
 
-# --- CubeIDE / Eclipse yerel ayarlar ---
+# --- CubeIDE / Eclipse local settings ---
 .settings/
 .metadata/
 *.launch
@@ -24,6 +24,6 @@ __pycache__/
 *.pyc
 venv/
 
-# --- Isletim sistemi ---
+# --- Operating system ---
 .DS_Store
 Thumbs.db
