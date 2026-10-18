@@ -116,7 +116,7 @@ recording.
 ### Firmware architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     T["ThreadX timer<br/>every 10 ms"] -->|put| S(["sample_sem<br/>ceiling 1"])
     S -->|get| IMU["IMU thread · prio 5<br/>I²C read 14 bytes<br/>calibrate · adaptive R<br/>Kalman roll + pitch"]
     IMU -->|"send, TX_NO_WAIT"| Q[["msg queue<br/>depth 8"]]
