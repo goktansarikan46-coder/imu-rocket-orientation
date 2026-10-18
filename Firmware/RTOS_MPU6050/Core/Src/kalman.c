@@ -9,7 +9,7 @@
 
 
 /* ==========================================================================
- *  Yardimci: aciyi -180..+180 araligina sarar
+ *  Helper: wraps an angle to the -180..+180 range
  * ========================================================================== */
 static float wrap_180(float a)
 {
@@ -20,7 +20,7 @@ static float wrap_180(float a)
 
 
 /* ==========================================================================
- *  BASLATMA
+ *  INIT
  * ========================================================================== */
 void kalman_init(Kalman_t *kf, float start_angle, uint8_t wrap180)
 {
@@ -28,12 +28,12 @@ void kalman_init(Kalman_t *kf, float start_angle, uint8_t wrap180)
     kf->Q_bias    = KF_Q_BIAS;
     kf->R_measure = KF_R_MEASURE;
 
-    kf->angle = start_angle;   /* ivmeolcerden okunan ilk aci */
-    kf->bias  = 0.0f;          /* bias'i bilmiyoruz, sifirdan basla */
+    kf->angle = start_angle;   /* first angle read from the accelerometer */
+    kf->bias  = 0.0f;          /* bias unknown, start from zero */
     kf->rate  = 0.0f;
 
-    /* P matrisi: baslangicta aciya guveniyoruz (ivmeolcerden geldi),
-       bias'i ise hic bilmiyoruz -> P[1][1] biraz buyuk baslar.        */
+    /* P matrix: the initial angle is trusted (it came from the accelerometer),
+       the bias is unknown -> P[1][1] starts somewhat large.               */
     kf->P[0][0] = 0.0f;
     kf->P[0][1] = 0.0f;
     kf->P[1][0] = 0.0f;
@@ -44,23 +44,23 @@ void kalman_init(Kalman_t *kf, float start_angle, uint8_t wrap180)
 
 
 /* ==========================================================================
- *  BIR ADIM: PREDICT + UPDATE
+ *  ONE STEP: PREDICT + UPDATE
  * ========================================================================== */
 float kalman_update(Kalman_t *kf, float new_angle, float new_rate, float dt)
 {
     /* ----------------------------------------------------------------------
-     *  1) PREDICT  -  jiroskopla ilerle, belirsizligi BUYUT
+     *  1) PREDICT  -  propagate with the gyro, GROW the uncertainty
      * ------------------------------------------------------------------- */
 
-    /* Jiroskop hizindan tahmini bias'i cikar -> temiz hiz */
+    /* Subtract the estimated bias from the gyro rate -> clean rate */
     kf->rate   = new_rate - kf->bias;
 
-    /* Aciyi integre et:  aci = aci + hiz * dt
-       (Tamamlayici filtredeki  r_pred = roll + fgx*dt  ile ayni satir)  */
+    /* Integrate the angle:  angle = angle + rate * dt
+       (same line as  r_pred = roll + fgx*dt  in the complementary filter) */
     kf->angle += kf->rate * dt;
 
-    /* Belirsizlik yayilimi:  P = A*P*A' + Q
-       Matris carpimi acilmis hali:                                       */
+    /* Covariance propagation:  P = A*P*A' + Q
+       Matrix product written out:                                        */
     kf->P[0][0] += dt * ( dt * kf->P[1][1]
                           - kf->P[0][1]
                           - kf->P[1][0]
@@ -71,32 +71,32 @@ float kalman_update(Kalman_t *kf, float new_angle, float new_rate, float dt)
 
 
     /* ----------------------------------------------------------------------
-     *  2) UPDATE  -  ivmeolcer olcumuyle duzelt, belirsizligi KUCULT
+     *  2) UPDATE  -  correct with the accelerometer, SHRINK the uncertainty
      * ------------------------------------------------------------------- */
 
-    /* Yenilik (innovation): olcum ile tahmin arasindaki fark.
-       Tamamlayici filtredeki  err = r_acc - r_pred  ile ayni sey.        */
+    /* Innovation: difference between measurement and prediction.
+       Same as  err = r_acc - r_pred  in the complementary filter.        */
     float y = new_angle - kf->angle;
 
-    /* Roll ekseninde -180/+180 sinirinda basa sarma duzeltmesi.
-       Ornek: olcum +179, tahmin -179 ise fark 358 degil, -2 derecedir.   */
+    /* Wrap-around fix at the -180/+180 boundary on the roll axis.
+       Example: measurement +179, prediction -179 -> the error is -2 deg, not 358. */
     if (kf->wrap180) y = wrap_180(y);
 
-    /* Yenilik kovaryansi: S = H*P*H' + R  =  P[0][0] + R                 */
+    /* Innovation covariance: S = H*P*H' + R  =  P[0][0] + R              */
     float S = kf->P[0][0] + kf->R_measure;
 
-    /* KALMAN KAZANCI:  K = P*H' / S
-       K0 -> aciya uygulanacak duzeltme orani  (senin ALPHA'nin yerine gecen sayi)
-       K1 -> bias'a uygulanacak duzeltme orani                            */
+    /* KALMAN GAIN:  K = P*H' / S
+       K0 -> correction ratio applied to the angle  (replaces the complementary ALPHA)
+       K1 -> correction ratio applied to the bias                         */
     float K0 = kf->P[0][0] / S;
     float K1 = kf->P[1][0] / S;
 
-    /* Durumlari duzelt:  x = x + K*y                                     */
+    /* Correct the states:  x = x + K*y                                   */
     kf->angle += K0 * y;
     kf->bias  += K1 * y;
 
-    /* Kovaryansi guncelle:  P = (I - K*H) * P
-       Eski degerler lazim oldugu icin once kopyala.                      */
+    /* Update the covariance:  P = (I - K*H) * P
+       The old values are needed, so copy them first.                     */
     float P00 = kf->P[0][0];
     float P01 = kf->P[0][1];
 
@@ -105,7 +105,7 @@ float kalman_update(Kalman_t *kf, float new_angle, float new_rate, float dt)
     kf->P[1][0] -= K1 * P00;
     kf->P[1][1] -= K1 * P01;
 
-    /* Cikisi araliga otur (sadece roll icin) */
+    /* Keep the output in range (roll only) */
     if (kf->wrap180) kf->angle = wrap_180(kf->angle);
 
     return kf->angle;
@@ -113,7 +113,7 @@ float kalman_update(Kalman_t *kf, float new_angle, float new_rate, float dt)
 
 
 /* ==========================================================================
- *  IVMEOLCER GUVENINI DEGISTIR
+ *  CHANGE ACCELEROMETER TRUST
  * ========================================================================== */
 void kalman_set_R(Kalman_t *kf, float R)
 {
