@@ -1,139 +1,172 @@
-# Roket-imu
+# IMU Rocket Orientation
 
-STM32 + MPU-6050 ile roketin **roll** ve **pitch** açısını gerçek zamanlı hesaplayan
-küçük bir öğrenci projesi. Açılar seri porttan CSV olarak PC'ye gönderiliyor, MATLAB
-tarafında 3B roket modeli ve canlı grafiklerle çiziliyor.
+Real-time **roll** and **pitch** estimation for a model rocket, running on an
+STM32C092RC (Cortex-M0+) with an MPU-6050 IMU.
 
-Amaç mümkün olduğunca sade kod yazmak: filtre 20 satır, ana döngü tek sayfa.
-Ama sadelik uğruna kararlılıktan ödün verilmedi — sabit örnekleme periyodu,
-jiroskop bias kalibrasyonu ve ivmeölçer güvenilirlik kontrolü var.
+- **ThreadX RTOS**, two threads, fixed 100 Hz sampling
+- **2-state Kalman filter** (angle + gyro bias) per axis
+- **Adaptive measurement noise (R)**: the filter stops trusting the accelerometer
+  during acceleration (e.g. motor burn) and near ±90° pitch
+- Angles and raw sensor data are streamed over UART as CSV and shown as a live
+  3D rocket in **Python** or **MATLAB**
 
-## İçerik
+## Repository layout
 
 ```
-roket-imu/
-├── firmware/
-│   └── main.c          STM32 tarafı (CubeMX projesine doğrudan girer)
-├── matlab/
-│   ├── roket_3b.m      3B roket + canlı roll/pitch grafikleri
-│   └── csv_kaydet.m    Gelen veriyi dosyaya kaydeder (offline analiz için)
-├── .gitignore
-└── LICENSE
+imu-rocket-orientation/
+├── Firmware/RTOS_MPU6050/        STM32CubeIDE project (CubeMX .ioc, HAL, ThreadX)
+│   ├── Core/Src/app_threadx.c    MPU-6050 driver, threads, adaptive R, CSV output
+│   ├── Core/Src/kalman.c         2-state Kalman filter
+│   ├── Core/Inc/kalman.h         Filter API and tuning constants
+│   ├── Drivers/                  STM32C0 HAL and CMSIS (generated)
+│   └── Middlewares/              Azure RTOS ThreadX (generated)
+├── Python/
+│   ├── MPU6050_Visualization.py  Live 3D rocket + roll/pitch plots, optional CSV logging
+│   └── deneme.csv                Sample recording (~970 rows at 100 Hz)
+├── Matlab/
+│   └── mpu-6050-visualization.m  Same live view in MATLAB
+├── Docs/                         Course reports and slides (in Turkish)
+└── README.md
 ```
 
-## Donanım
+## Hardware
 
-| Parça | Not |
+| Part | Notes |
 |---|---|
-| STM32 kartı | Projede STM32C092RC kullanıldı, HAL kullanan her STM32'de çalışır |
-| MPU-6050 | I2C, 3 eksen ivmeölçer + jiroskop |
-| USB-TTL / ST-Link VCP | UART üzerinden PC'ye veri |
+| NUCLEO-C092RC | STM32C092RC, Cortex-M0+ |
+| MPU-6050 | 3-axis accelerometer + 3-axis gyroscope, I²C address 0x68 |
+| USB cable | ST-Link virtual COM port carries the UART data to the PC |
 
-Bağlantı: MPU-6050'nin **SCL/SDA** pinleri kartın I2C hattına, **VCC 3.3 V**, **GND ortak**.
-Hangi pinlerin kullanıldığı `.ioc` dosyasında görünür (bu projede `I2C2` ve `USART2`).
-I2C hattında dahili pull-up yoksa 4.7 kΩ direnç ekleyin.
-
-## Kurulum
-
-1. STM32CubeMX/CubeIDE'de yeni proje aç, **I2C2** ve **USART2**'yi (115200 baud) etkinleştir.
-2. Üretilen `Core/Src/main.c` dosyasının yerine `firmware/main.c` dosyasını koy.
-   (Kod tamamen `USER CODE` bloklarının içinde, CubeMX yeniden kod ürettiğinde silinmez.)
-3. Derle, karta yükle.
-4. MATLAB'de `matlab/roket_3b.m` içindeki `PORT` değişkenini kendi portunla değiştir
-   (`serialportlist("available")` ile bulabilirsin) ve çalıştır.
-
-## Seri port veri formatı
-
-Kart saniyede 100 satır gönderir, her satır virgülle ayrılmış 9 tamsayı:
-
-```
-t_ms,ax,ay,az,gx,gy,gz,roll100,pitch100
-1250,-120,340,16380,-5,12,3,-1543,872
-```
-
-| Alan | Anlamı |
-|---|---|
-| `t_ms` | Kartın açılışından beri geçen süre (ms) — zamanlama analizi için |
-| `ax..gz` | Sensörden okunan **ham** değerler (LSB) |
-| `roll100`, `pitch100` | Açı × 100 (derece). Yani `-1543` → `-15.43°` |
-
-Açılar 100 ile çarpılıp tamsayı olarak gönderiliyor çünkü `sprintf` ile float basmak
-küçük MCU'larda hem yavaş hem de ek kütüphane gerektiriyor. Ham veriler de gönderiliyor
-ki aynı kayıt üzerinde farklı filtreler denenebilsin.
-
-## Nasıl çalışıyor?
-
-### 1. İki sensör, iki farklı zaaf
-
-| Sensör | İyi tarafı | Kötü tarafı |
+| Signal | MCU pin | Peripheral |
 |---|---|---|
-| İvmeölçer | Yer çekimini gördüğü için **mutlak** referans, kaymaz | Gürültülü, her titreşimden etkilenir |
-| Jiroskop | Kısa vadede çok temiz ve hızlı | İntegral aldığımız için hatası **birikir** (drift) |
+| MPU-6050 SDA | PA6 | I2C2 |
+| MPU-6050 SCL | PA7 | I2C2 |
+| UART TX / RX | PA2 / PA3 | USART2, 115200 baud |
 
-Tamamlayıcı filtre bu ikisini birleştirir: açıyı jiroskopla ilerletir, ivmeölçeri de
-yavaşça "doğru yöne çeken" bir düzeltme olarak kullanır.
+Power the MPU-6050 from 3.3 V and share GND. Add 4.7 kΩ pull-ups on SDA/SCL if
+your breakout board has none.
 
-```c
-aci += gyro_dps * DT;                          /* hizli ama kayan tahmin */
-aci += (1 - ALFA) * (acc_aci - aci);           /* yavas ama kaymayan duzeltme */
+## Getting started
+
+### Firmware
+
+1. Open STM32CubeIDE and use **File → Import → Existing Projects into Workspace**,
+   then select `Firmware/RTOS_MPU6050`.
+2. Build and flash.
+3. **Keep the board still for the first 10 seconds** after reset. The gyro bias
+   is measured during this time.
+
+### Python viewer
+
+```bash
+pip install pyserial pyqtgraph PyQt5 numpy
+python Python/MPU6050_Visualization.py
 ```
 
-`ALFA = 0.98` → düzeltmenin ağırlığı %2. Zaman sabiti yaklaşık
-`DT * ALFA / (1 - ALFA) = 0.01 * 49 = 0.49 s`.
-Yani ivmeölçer, yarım saniyeden uzun süreli hataları temizler; ondan kısa süreli
-sarsıntıları ise jiroskop bastırır.
+Set `PORT` at the top of the script (`"COM3"`, `/dev/ttyACM0`, or `None` to pick
+the first port found). `LOG_CSV` sets the file name for saving the incoming data.
 
-### 2. Sabit `dt` neden önemli?
+### MATLAB viewer
 
-`dt`'yi `HAL_GetTick()` farkıyla ölçmek ilk bakışta daha doğru görünür, ama ölçülen süreye
-UART gönderiminin ve işlem süresinin gecikmesi de karışır. Jiroskopta bu doğrudan açı hatası
-olarak birikir. Bunun yerine döngü **sabit 10 ms**'de çalıştırılıyor ve `dt` sabit `0.01f`
-alınıyor:
+Set `PORT` in `Matlab/mpu-6050-visualization.m` (find it with
+`serialportlist("available")`) and run the script.
 
-```c
-while ((int32_t)(HAL_GetTick() - sonraki) < 0) { }   /* periyodun basini bekle */
-sonraki += ORNEK_PERIYOT;
+## Serial data format
+
+After start-up the board prints a `WHO_AM_I=104` check line, then a header,
+then 100 lines per second:
+
+```
+ax,ay,az,gx,gy,gz,roll100,pitch100
+119,624,17690,176,121,-82,65,192
 ```
 
-`HAL_Delay(10)` yerine bunun kullanılmasının sebebi: `HAL_Delay` işlem süresinin **üstüne**
-10 ms ekler, bu yöntemse periyodun başlangıcını sabitler.
+| Field | Meaning |
+|---|---|
+| `ax, ay, az` | Raw accelerometer values (LSB, ±2 g range) |
+| `gx, gy, gz` | Raw gyroscope values (LSB, ±500 °/s range) |
+| `roll100`, `pitch100` | Filtered angle × 100 in degrees, so `-1543` means `-15.43°` |
 
-### 3. Jiroskop bias kalibrasyonu
+Angles are sent as integers to avoid `printf` float support on the small MCU.
+Raw values are included so that other filters can be tried offline on the same
+recording.
 
-Jiroskop dururken bile sıfır göstermez, küçük bir ofseti vardır. Açılış anında kart 2 saniye
-sabit tutulur, 200 örneğin ortalaması alınır ve bu değer her okumadan çıkarılır.
-Bu ofset sıcaklıkla değiştiği için her açılışta yeniden ölçülür — sabit bir sayı olarak
-koda gömülemez.
+## How it works
 
-### 4. İvmeölçer güven kontrolü (basit ama kritik)
+### Firmware architecture
 
-Roket motor ateşlerken ivmeölçer artık yer çekimini değil, itkiyi ölçer — o an ondan gelen
-açı tamamen yanlıştır. Bu yüzden vektörün büyüklüğü 1 g'ye yakın değilse düzeltme adımı
-atlanır ve o süre boyunca sadece jiroskopa güvenilir:
-
-```c
-if (buyukluk > 0.70f && buyukluk < 1.30f)  /* sadece bu aralikta duzelt */
+```
+ThreadX timer (10 ms) ──► semaphore ──► IMU thread (priority 5) ──► queue (8) ──► UART thread (priority 10) ──► USART2
+                                         read 14 bytes over I²C                    sprintf + interrupt-driven TX
+                                         calibrate, Kalman filter
 ```
 
-Üç satırlık bu kontrol, yüksek ivmeli anlarda açının bozulmasını engeller.
+- **Timer → semaphore.** A ThreadX timer fires every tick (10 ms) and puts a
+  semaphore with a ceiling of 1. If the IMU thread is ever late, ticks do not
+  pile up and the thread does not run several times back to back.
+- **Fixed `dt`.** `dt` comes from the timer period (0.01 s), not from measuring
+  time between loops. A measured `dt` would include jitter and add integration
+  error to the gyro angle.
+- **Sampling never waits for UART.** The IMU thread sends to the queue with
+  `TX_NO_WAIT`. If the UART falls behind, a sample is dropped instead of
+  delaying the filter.
+- **UART does not block the CPU.** The UART thread uses `HAL_UART_Transmit_IT`
+  and sleeps on a semaphore that the TX-complete interrupt releases.
 
-## Bilinen sınırlamalar
+### Sensor setup and calibration
 
-- **Yaw (sapma) yok.** Tek başına IMU ile yaw'ı sabitlemek mümkün değil, manyetometre gerekir.
-- **±90° pitch'te gimbal lock.** Euler açıları kullanıldığı için burun tam yukarı bakarken
-  roll tanımsızlaşır. Kalıcı çözüm kuaterniyon tabanlı filtre.
-- **UART bloklayıcı.** Her satır ~4 ms sürüyor, yani 10 ms'lik bütçenin epey bir kısmını
-  yiyor. Veri hızını artırmak istersen kesme/DMA ile göndermek gerekir.
-- **Sensör okuma yoklamalı (polling).** MPU-6050'nin INT pini kullanılmıyor.
+- MPU-6050 is configured for 100 Hz output, 42 Hz digital low-pass filter,
+  ±500 °/s gyro and ±2 g accelerometer.
+- **Gyro bias:** averaged over 1000 samples (10 s) at every power-up, because
+  it changes with temperature and cannot be hard-coded.
+- **Accelerometer:** offset and scale for each axis come from a 6-position test
+  (`offset = (pos + neg) / 2`, `scale = (pos − neg) / 2`). These constants are
+  specific to this sensor.
 
-## Yol haritası
+### Kalman filter
 
-- [ ] Kalman filtresi (jiroskop bias'ını çalışma anında tahmin eder)
-- [ ] Kuaterniyon / Mahony filtresi — gimbal lock çözümü
-- [ ] MPU INT pini + kesme ile örnekleme
-- [ ] UART'ın DMA'ya taşınması
-- [ ] SD karta uçuş kaydı
+Each axis runs a 2-state filter: state = [angle, gyro bias].
 
-## Lisans
+- **Predict:** integrate the bias-corrected gyro rate and grow the covariance `P`.
+- **Update:** correct with the accelerometer angle. The Kalman gain decides how
+  much to trust it, and the gyro bias is learned online.
+- For roll, the innovation is wrapped to ±180°, so +179° vs −179° is a 2° error,
+  not 358°.
 
-MIT — bkz. [LICENSE](LICENSE).
+Tuning (`kalman.h`): `Q_angle = 0.001`, `Q_bias = 0.003`, `R = 0.03`.
+
+### Adaptive measurement noise
+
+The accelerometer angle is only correct when gravity is the only acceleration.
+Before each update the firmware sets `R`:
+
+| Condition | Roll R | Pitch R |
+|---|---|---|
+| `\|a\|` differs from 1 g by more than 0.15 g (motion, thrust) | 10 (ignore) | 10 (ignore) |
+| Gravity in the Y-Z plane `g_yz < 0.15` (near ±90° pitch) | 10 (ignore) | 0.03 |
+| Otherwise | `0.03 / g_yz²` | 0.03 |
+
+When the measurement is ignored, the filter runs on the gyro alone. Roll trust
+also drops smoothly as pitch grows, because roll becomes less observable from
+gravity.
+
+## Known limitations
+
+- **No yaw.** An IMU without a magnetometer cannot hold a yaw reference.
+- **Gimbal lock at ±90° pitch.** Euler angles are used; a quaternion filter would fix this.
+- **Timer-driven, blocking I²C reads.** The MPU-6050 INT pin and DMA are not used yet.
+- **Text protocol.** CSV is easy to read but large; there is no timestamp or checksum.
+- **Raw-angle overlay in Python** uses the nominal 16384 LSB/g scale, without the
+  firmware's calibration constants.
+
+## Roadmap
+
+- [ ] Measure sensor noise with Allan variance and derive Q and R from it
+- [ ] Sample on the MPU-6050 data-ready interrupt, I²C/UART with DMA, binary protocol with CRC
+- [ ] Quaternion Mahony filter (removes gimbal lock)
+- [ ] Unit tests for the filters (GoogleTest) and GitHub Actions CI
+- [ ] Magnetometer for yaw
+
+## License
+
+MIT — see [LICENSE](LICENSE).
