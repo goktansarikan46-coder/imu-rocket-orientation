@@ -10,6 +10,13 @@ STM32C092RC (Cortex-M0+) with an MPU-6050 IMU.
 - Angles and raw sensor data are streamed over UART as CSV and shown as a live
   3D rocket in **Python** or **MATLAB**
 
+![Roll and pitch: accelerometer-only angle vs. Kalman filter output](Docs/images/roll_pitch_sample.png)
+
+*A recorded roll manoeuvre (`Python/sample_recording.csv`). Grey: angle from the
+accelerometer alone. Blue: the firmware's Kalman output. The filter follows the
+real rotation and ignores short acceleration spikes, such as the 28° pitch spike
+near t = 9.2 s.*
+
 ## Repository layout
 
 ```
@@ -22,10 +29,13 @@ imu-rocket-orientation/
 │   └── Middlewares/              Azure RTOS ThreadX (generated)
 ├── Python/
 │   ├── MPU6050_Visualization.py  Live 3D rocket + roll/pitch plots, optional CSV logging
-│   └── deneme.csv                Sample recording (~970 rows at 100 Hz)
+│   ├── plot_recording.py         Offline plot of a recording (accelerometer vs. Kalman)
+│   └── sample_recording.csv      Sample recording (971 rows at 100 Hz)
 ├── Matlab/
 │   └── mpu-6050-visualization.m  Same live view in MATLAB
-├── Docs/                         Course reports and slides (in Turkish)
+├── Docs/
+│   ├── images/                   Figures used in this README
+│   └── ...                       Course reports and slides (in Turkish)
 └── README.md
 ```
 
@@ -64,7 +74,17 @@ python Python/MPU6050_Visualization.py
 ```
 
 Set `PORT` at the top of the script (`"COM3"`, `/dev/ttyACM0`, or `None` to pick
-the first port found). `LOG_CSV` sets the file name for saving the incoming data.
+the first port found). Set `LOG_CSV` to a file name to save the incoming data.
+
+### Plot a recording
+
+```bash
+pip install numpy matplotlib
+python Python/plot_recording.py Python/sample_recording.csv
+```
+
+This recomputes the accelerometer angle with the firmware's calibration constants
+and plots it against the Kalman output. The figure above was made this way.
 
 ### MATLAB viewer
 
@@ -95,10 +115,14 @@ recording.
 
 ### Firmware architecture
 
-```
-ThreadX timer (10 ms) ──► semaphore ──► IMU thread (priority 5) ──► queue (8) ──► UART thread (priority 10) ──► USART2
-                                         read 14 bytes over I²C                    sprintf + interrupt-driven TX
-                                         calibrate, Kalman filter
+```mermaid
+flowchart LR
+    T["ThreadX timer<br/>every 10 ms"] -->|put| S(["sample_sem<br/>ceiling 1"])
+    S -->|get| IMU["IMU thread · prio 5<br/>I²C read 14 bytes<br/>calibrate · adaptive R<br/>Kalman roll + pitch"]
+    IMU -->|"send, TX_NO_WAIT"| Q[["msg queue<br/>depth 8"]]
+    Q -->|receive| UART["UART thread · prio 10<br/>sprintf CSV line<br/>HAL_UART_Transmit_IT"]
+    UART --> HW["USART2<br/>115200 baud"]
+    HW -. "TX complete IRQ<br/>put uart_tx_done" .-> UART
 ```
 
 - **Timer → semaphore.** A ThreadX timer fires every tick (10 ms) and puts a
@@ -156,8 +180,6 @@ gravity.
 - **Gimbal lock at ±90° pitch.** Euler angles are used; a quaternion filter would fix this.
 - **Timer-driven, blocking I²C reads.** The MPU-6050 INT pin and DMA are not used yet.
 - **Text protocol.** CSV is easy to read but large; there is no timestamp or checksum.
-- **Raw-angle overlay in Python** uses the nominal 16384 LSB/g scale, without the
-  firmware's calibration constants.
 
 ## Roadmap
 
