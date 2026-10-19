@@ -57,7 +57,7 @@
     .global     __Vectors
 @
 @
-SYSTEM_CLOCK      =   48000000
+SYSTEM_CLOCK      =   168000000
 SYSTICK_CYCLES    =   ((SYSTEM_CLOCK / 100) -1)
 
     .text
@@ -234,7 +234,7 @@ SysTick_Handler:
     EXTERN  _tx_execution_isr_exit
 ;
 ;
-SYSTEM_CLOCK      EQU   48000000
+SYSTEM_CLOCK      EQU   168000000
 SYSTICK_CYCLES    EQU   ((SYSTEM_CLOCK / 100) -1)
 
 #ifdef USE_DYNAMIC_MEMORY_ALLOCATION
@@ -430,7 +430,7 @@ SysTick_Handler:
 @
 @
 
-SYSTEM_CLOCK      =   48000000
+SYSTEM_CLOCK      =   168000000
 SYSTICK_CYCLES    =   ((SYSTEM_CLOCK / 100) -1)
 
     .text
@@ -440,7 +440,7 @@ SYSTICK_CYCLES    =   ((SYSTEM_CLOCK / 100) -1)
 @/*                                                                        */
 @/*  FUNCTION                                               RELEASE        */
 @/*                                                                        */
-@/*    _tx_initialize_low_level                          Cortex-M0/GNU     */
+@/*    _tx_initialize_low_level                          Cortex-M4/GNU     */
 @/*                                                           6.1          */
 @/*  AUTHOR                                                                */
 @/*                                                                        */

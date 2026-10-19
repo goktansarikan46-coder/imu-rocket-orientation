@@ -1,7 +1,8 @@
 # IMU Rocket Orientation
 
 Real-time **roll** and **pitch** estimation for a model rocket, running on an
-STM32C092RC (Cortex-M0+) with an MPU-6050 IMU.
+STM32F407VG Discovery board (STM32F407G-DISC1, Cortex-M4F at 168 MHz) with an
+MPU-6050 IMU.
 
 - **ThreadX RTOS**, two threads, fixed 100 Hz sampling
 - **2-state Kalman filter** (angle + gyro bias) per axis
@@ -21,12 +22,12 @@ near t = 9.2 s.*
 
 ```
 imu-rocket-orientation/
-├── Firmware/RTOS_MPU6050/        STM32CubeIDE project (CubeMX .ioc, HAL, ThreadX)
+├── Firmware/RTOS_MPU6050/        STM32CubeIDE project (HAL, ThreadX)
 │   ├── Core/Src/app_threadx.c    MPU-6050 driver, threads, adaptive R, CSV output
 │   ├── Core/Src/kalman.c         2-state Kalman filter
 │   ├── Core/Inc/kalman.h         Filter API and tuning constants
-│   ├── Drivers/                  STM32C0 HAL and CMSIS (generated)
-│   └── Middlewares/              Azure RTOS ThreadX (generated)
+│   ├── Drivers/                  STM32F4 HAL and CMSIS
+│   └── Middlewares/              ThreadX 6.4 with the Cortex-M4 GNU port
 ├── Python/
 │   ├── MPU6050_Visualization.py  Live 3D rocket + roll/pitch plots, optional CSV logging
 │   ├── plot_recording.py         Offline plot of a recording (accelerometer vs. Kalman)
@@ -43,18 +44,22 @@ imu-rocket-orientation/
 
 | Part | Notes |
 |---|---|
-| NUCLEO-C092RC | STM32C092RC, Cortex-M0+ |
+| STM32F407G-DISC1 | STM32F407VG, Cortex-M4F with FPU, 8 MHz crystal, 168 MHz |
 | MPU-6050 | 3-axis accelerometer + 3-axis gyroscope, I²C address 0x68 |
-| USB cable | ST-Link virtual COM port carries the UART data to the PC |
+| USB-to-UART adapter (3.3 V) | Carries the CSV data to the PC. The board's ST-LINK/V2-A has no virtual COM port |
 
 | Signal | MCU pin | Peripheral |
 |---|---|---|
-| MPU-6050 SDA | PA6 | I2C2 |
-| MPU-6050 SCL | PA7 | I2C2 |
-| UART TX / RX | PA2 / PA3 | USART2, 115200 baud |
+| MPU-6050 SCL | PB6 | I2C1, 400 kHz |
+| MPU-6050 SDA | PB9 | I2C1 |
+| UART TX → adapter RX | PA2 | USART2, 115200 baud |
+| UART RX ← adapter TX | PA3 | USART2 |
 
-Power the MPU-6050 from 3.3 V and share GND. Add 4.7 kΩ pull-ups on SDA/SCL if
-your breakout board has none.
+Power the MPU-6050 from the board's 3V pin (or 5V if your breakout, like the GY-521,
+has its own 3.3 V regulator) and GND. Connect the adapter's
+GND too. PB6/PB9 is the board's own I²C bus (shared with the CS43L22 audio DAC
+at 0x4A), so 4.7 kΩ pull-ups are already fitted. Do not use PA5–PA7: they go to
+the on-board accelerometer over SPI1.
 
 ## Getting started
 

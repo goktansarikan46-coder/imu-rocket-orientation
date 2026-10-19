@@ -28,7 +28,7 @@ extern "C" {
 /* Includes ------------------------------------------------------------------*/
 
 #include "app_threadx.h"
-#include "stm32c0xx_hal.h"
+#include "stm32f4xx_hal.h"
 #include "app_azure_rtos_config.h"
 
 /* Private includes ----------------------------------------------------------*/

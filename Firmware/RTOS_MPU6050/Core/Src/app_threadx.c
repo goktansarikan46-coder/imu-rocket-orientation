@@ -1,7 +1,7 @@
 /******************************************************************************
   * @file    app_threadx.c
   * @brief   MPU-6050 + Kalman Filter + ThreadX
-  *          STM32C092RC (Cortex-M0+)
+  *          STM32F407VG Discovery (Cortex-M4F, 168 MHz)
   *          Goktan Sarikan
   ******************************************************************************
   */
@@ -51,8 +51,8 @@
 #define MS_TO_TICK(ms)  (((ms) * TX_TIMER_TICKS_PER_SECOND) / 1000)
 
 /* --- Thread settings --- */
-#define IMU_STACK_SIZE   1024
-#define UART_STACK_SIZE  1024
+#define IMU_STACK_SIZE   2048    /* Cortex-M4F: FPU context needs extra room */
+#define UART_STACK_SIZE  2048
 #define IMU_PRIORITY     5       /* lower number = higher priority          */
 #define UART_PRIORITY    10
 #define QUEUE_DEPTH      8
