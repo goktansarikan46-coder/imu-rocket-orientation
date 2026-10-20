@@ -27,14 +27,19 @@ Why two different rates?
     drawing slows down; the screen always uses the newest value.
 
 
-Install: pip install pyserial pyqtgraph PyQt5 numpy
-Run:     python Python/MPU6050_Visualization.py
+No USB-UART adapter? Set PORT = "SWD": the angles are then read straight
+from the MCU's RAM through the ST-LINK debug probe (pyOCD, no serial port).
+
+Install: pip install pyserial pyqtgraph PyQt5 PyOpenGL numpy   (+ pyocd for SWD mode)
+Run:     python Python/MPU6050_Visualization.py [COM3 | SWD]
 """
 
 import sys
 import math
+import struct
 import time
 import threading
+from pathlib import Path
 
 import numpy as np
 import serial
@@ -50,12 +55,15 @@ from pyqtgraph.Qt import QtCore, QtWidgets
 # ==========================================================================
 
 PORT      = None      # None -> pick the first port found. Or set it: "COM3" / "/dev/ttyACM0"
+                      # "SWD" -> read the angles over the ST-LINK instead of a serial port
 BAUD      = 115200
 TAU       = 0.05      # smoothing time constant [s]. Increase if jittery, decrease if laggy.
 RSIGN     = +1        # set to -1 if roll turns the wrong way
 PSIGN     = +1        # set to -1 if pitch tilts the wrong way
 N_SAMPLES = 400       # samples visible in the plots (~4 seconds)
 LOG_CSV   = None      # set a file name to record the stream, e.g. LOG_CSV = "recording.csv"
+                      # (serial mode only)
+ELF_PATH  = Path(__file__).resolve().parent.parent / "Firmware" / "RTOS_MPU6050" / "Debug" / "RTOS_MPU6050.elf"
 
 # Accelerometer calibration, same constants as the firmware (app_threadx.c)
 ACC_OFF = (651.5, 415.5, 800.5)          # LSB
@@ -130,9 +138,13 @@ class SerialReader(threading.Thread):
             return None                 # drops the "ax,ay,az,..." header line
 
     def read(self):
-        """Called by the screen side: (latest, total_lines)."""
+        """Called by the screen side: ((roll, pitch, roll_acc, pitch_acc), total_lines)."""
         with self.lock:
-            return self.latest, self.line_count
+            data, lines = self.latest, self.line_count
+        if data is None:
+            return None, lines
+        r_acc, p_acc = accel_angles(data[0], data[1], data[2])
+        return (data[6] / 100.0, data[7] / 100.0, r_acc, p_acc), lines
 
     def stop(self):
         self.running = False
@@ -143,6 +155,66 @@ class SerialReader(threading.Thread):
             pass
         if self.log:
             self.log.close()
+
+
+class SwdReader(threading.Thread):
+    """
+    Same interface as SerialReader, but reads the firmware's debug variables
+    (dbg_roll, dbg_pitch, dbg_roll_acc, dbg_pitch_acc) from RAM over SWD.
+    The core keeps running; the ST-LINK reads memory in the background.
+    Variable addresses come from the ELF, so a rebuild needs no code change.
+    """
+
+    SYMBOLS = ("dbg_roll", "dbg_pitch", "dbg_roll_acc", "dbg_pitch_acc", "dbg_sample_cnt")
+
+    def __init__(self, elf_path):
+        super().__init__(daemon=True)
+        from elftools.elf.elffile import ELFFile
+        from pyocd.core.helpers import ConnectHelper
+
+        with open(elf_path, "rb") as f:
+            symtab = ELFFile(f).get_section_by_name(".symtab")
+            self.addr = {name: symtab.get_symbol_by_name(name)[0]["st_value"]
+                         for name in self.SYMBOLS}
+
+        self.session = ConnectHelper.session_with_chosen_probe(
+            options={"connect_mode": "attach", "frequency": 4000000},
+            target_override="cortex_m")
+        self.session.open()
+        self.target     = self.session.target
+        self.lock       = threading.Lock()
+        self.latest     = None
+        self.line_count = 0
+        self.running    = True
+
+    def _f32(self, name):
+        raw = bytes(self.target.read_memory_block8(self.addr[name], 4))
+        return struct.unpack("<f", raw)[0]
+
+    def run(self):
+        last_cnt = None
+        while self.running:
+            try:
+                cnt = self.target.read32(self.addr["dbg_sample_cnt"])
+                if cnt == last_cnt:          # no new sample yet
+                    time.sleep(0.002)
+                    continue
+                angles = tuple(self._f32(n) for n in self.SYMBOLS[:4])
+            except Exception:
+                break
+            with self.lock:
+                self.latest = angles
+                self.line_count += (cnt - last_cnt) if last_cnt is not None else 1
+            last_cnt = cnt
+
+    def read(self):
+        with self.lock:
+            return self.latest, self.line_count
+
+    def stop(self):
+        self.running = False
+        time.sleep(0.25)
+        self.session.close()
 
 
 # ==========================================================================
@@ -429,9 +501,9 @@ class Window(QtWidgets.QWidget):
         # 1) Take the latest line
         data, lines = self.reader.read()
         if data is not None:
-            self.roll_target  = RSIGN * data[6] / 100.0
-            self.pitch_target = PSIGN * data[7] / 100.0
-            r_raw, p_raw = accel_angles(data[0], data[1], data[2])
+            roll, pitch, r_raw, p_raw = data
+            self.roll_target  = RSIGN * roll
+            self.pitch_target = PSIGN * pitch
             self.roll_raw, self.pitch_raw = RSIGN * r_raw, PSIGN * p_raw
         else:
             lines = 0
@@ -463,6 +535,8 @@ class Window(QtWidgets.QWidget):
 # ==========================================================================
 
 def pick_port():
+    if len(sys.argv) > 1:
+        return sys.argv[1]
     if PORT:
         return PORT
     ports = list(serial.tools.list_ports.comports())
@@ -477,7 +551,11 @@ def pick_port():
 
 
 def main():
-    reader = SerialReader(pick_port(), BAUD, LOG_CSV)
+    port = pick_port()
+    if port == "SWD":
+        reader = SwdReader(ELF_PATH)
+    else:
+        reader = SerialReader(port, BAUD, LOG_CSV)
     reader.start()
 
     pg.mkQApp("Rocket")

@@ -11,6 +11,11 @@ MPU-6050 IMU.
 - Angles and raw sensor data are streamed over UART as CSV and shown as a live
   3D rocket in **Python** or **MATLAB**
 
+![Live 3D view: the rocket follows the board's roll and pitch](Docs/images/rocket_demo.gif)
+
+*Live run on the board: tilting the sensor by hand. Left: 3D rocket. Right: roll
+and pitch over the last 4 seconds.*
+
 ![Roll and pitch: accelerometer-only angle vs. Kalman filter output](Docs/images/roll_pitch_sample.png)
 
 *A recorded roll manoeuvre (`Python/sample_recording.csv`). Grey: angle from the
@@ -46,7 +51,7 @@ imu-rocket-orientation/
 |---|---|
 | STM32F407G-DISC1 | STM32F407VG, Cortex-M4F with FPU, 8 MHz crystal, 168 MHz |
 | MPU-6050 | 3-axis accelerometer + 3-axis gyroscope, I²C address 0x68 |
-| USB-to-UART adapter (3.3 V) | Carries the CSV data to the PC. The board's ST-LINK/V2-A has no virtual COM port |
+| USB-to-UART adapter (3.3 V) | Carries the CSV data to the PC. The ST-LINK's virtual COM port is not wired to USART2. Optional: the viewer can also read over SWD |
 
 | Signal | MCU pin | Peripheral |
 |---|---|---|
@@ -74,12 +79,25 @@ the on-board accelerometer over SPI1.
 ### Python viewer
 
 ```bash
-pip install pyserial pyqtgraph PyQt5 numpy
-python Python/MPU6050_Visualization.py
+pip install pyserial pyqtgraph PyQt5 PyOpenGL numpy
+python Python/MPU6050_Visualization.py COM5
 ```
 
-Set `PORT` at the top of the script (`"COM3"`, `/dev/ttyACM0`, or `None` to pick
-the first port found). Set `LOG_CSV` to a file name to save the incoming data.
+Pass the serial port as an argument, or set `PORT` at the top of the script
+(`None` picks the first port found). Set `LOG_CSV` to a file name to save the
+incoming data.
+
+**No USB-to-UART adapter?** Use the ST-LINK instead:
+
+```bash
+pip install pyocd
+python Python/MPU6050_Visualization.py SWD
+```
+
+In SWD mode the viewer reads the firmware's `dbg_roll`, `dbg_pitch`, … variables
+straight from RAM over the debug probe while the core keeps running. Their
+addresses come from `Firmware/RTOS_MPU6050/Debug/RTOS_MPU6050.elf`, so build the
+Debug configuration first. The GIF above was recorded this way.
 
 ### Plot a recording
 
